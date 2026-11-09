@@ -4,5 +4,7 @@ langchain-openai>=1.0
 pydantic>=2.0
 python-dotenv>=1.0
 requests>=2.31
+fastapi>=0.115
+uvicorn>=0.30
 # Optional, only for LLM_PROVIDER=watsonx:
 # langchain-ibm>=1.1
