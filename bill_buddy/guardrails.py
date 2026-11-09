@@ -12,7 +12,8 @@ said so far. It returns None to allow the call, or a message for the LLM.
 from __future__ import annotations
 
 import re
-from typing import Callable, List, Optional
+from decimal import Decimal, InvalidOperation
+from typing import Callable, List, Optional, Set
 
 Guardrail = Callable[[str, dict, str], Optional[str]]
 
@@ -38,6 +39,51 @@ def ambiguous_pesos(tool_name: str, args: dict, user_text: str) -> Optional[str]
             "(Mexican MXN, Colombian COP, Argentine ARS, Chilean CLP...)."
         )
     return None
+
+
+NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
+
+
+def numbers_in(text: str) -> Set[Decimal]:
+    """Every number the user wrote, read both ways: "1,200" -> 1200 and "12,50" -> 12.5."""
+    found: Set[Decimal] = set()
+    for raw in NUMBER.findall(text):
+        for candidate in (raw.replace(",", ""), raw.replace(".", "").replace(",", "."), raw):
+            try:
+                found.add(Decimal(candidate))
+            except InvalidOperation:
+                pass
+    return found
+
+
+def numbers_from_user(tool_names=("propose_expense",), fields=("amount", "tip_percent")) -> Guardrail:
+    """Block tool calls whose amounts the user never said.
+
+    In testing, "Paid lunch" made the model invent "25 EUR + 10% tip", and
+    "Dinner was 80 dollars" got an unrequested 15% tip. Money must come from
+    the person, not from the model's imagination.
+    """
+    def check(tool_name: str, args: dict, user_text: str) -> Optional[str]:
+        if tool_name not in tool_names:
+            return None
+        said = numbers_in(user_text)
+        for field in fields:
+            value = args.get(field)
+            if value in (None, "", 0):
+                continue
+            try:
+                number = Decimal(str(value))
+            except InvalidOperation:
+                continue  # the tool's own validation will explain the problem
+            if number not in said:
+                return (
+                    f"The user never said the {field} {value}. Don't guess amounts: "
+                    f"ask the user for the {field.replace('_', ' ')}"
+                    + (" or leave it at 0." if field != "amount" else ".")
+                )
+        return None
+
+    return check
 
 
 DEFAULT_GUARDRAILS: List[Guardrail] = [ambiguous_pesos]
